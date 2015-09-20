@@ -4,16 +4,24 @@ A plugin for MacroQuest 2 allowing the use of the Lua scripting language.
 
 ## Why?
 
-MQ2's internal programming language is... less than ideal. If you've ever tried to script for
-MQ2, then you already know what I mean. Lua is a clean, fast, simple language designed for scenarios 
-exactly like MQ2 scripting. If you're a coder, then it's an easy sell.
+#### Coders
+
+MQ2's internal programming language is... well, "less than ideal" is a generous way of putting it. 
+If you've ever tried to script for MQ2, then you already know what I mean. 
+Lua is a clean, fast, simple language designed for scenarios exactly like MQ2 scripting. 
+If you're a coder, then it's an easy sell.
+
+#### MQ2 Users
+
+If you're a user, then you're probably here because someone else made something with MQ2Lua that you want to use.
+Great! Follow the Quick Installation below. Make sure you also install MQ2LuaScripts!
 
 ## Quick Installation
 
 - Exit EQ and MQ2.
 - Put MQ2Lua.dll in your MacroQuest2 folder (wherever MacroQuest2.exe is)
 - Make a folder called "lua" in your MacroQuest2 folder
-- Download a collection of supporting scripts into the "lua" folder you just made.
+- Download a collection of supporting scripts (like MQ2LuaScripts!) into the "lua" folder you just made.
 - Launch MQ2, then EQ.
 - Have fun!
 

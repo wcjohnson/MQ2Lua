@@ -87,10 +87,13 @@ If the DataVar would resolve to an MQ2 object, then it is cast to boolean, so "t
 returned if the object exists, "false" otherwise. If the DataVar can't be parsed or doesn't exist,
 the Lua literal nil will be returned.
 
-Example: ```MQ2.data("Me.PctHPs")``` => 100
-Example: ```MQ2.data("Me.XTarget[1].TargetType")``` => "Auto Hater"
-Example: ```MQ2.data("Me")``` => true (Me is an object)
-Example: ```MQ2.data("gibberish")``` => nil
+Example: ```MQ2.data("Me.PctHPs")``` => ```100```
+
+Example: ```MQ2.data("Me.XTarget[1].TargetType")``` => ```"Auto Hater"```
+
+Example: ```MQ2.data("Me")``` => ```true``` (Me is an object)
+
+Example: ```MQ2.data("gibberish")``` => ```nil```
 
 ### MQ2.pulse(function pulseHandler)
 
@@ -118,7 +121,7 @@ A timer function. Result is a floating point number with units of seconds and pr
 ### function f = MQ2.load(string filename)
 
 Loads a lua file from within the $MQ2_PATH/lua/ directory. Returns a function which, when called, evaluates
-the script in the file.
+the compiled code.
 
 ### MQ2.saveconfig(string filename, string data)
 
@@ -128,3 +131,7 @@ string yourself! (Whatever can be done in Lua, should be!)
 
 Combined with ```MQ2.load``` this can be used to develop a system for loading and storing user
 configuration information.
+
+## What??? That's the whole API?
+
+Yup! And you'd be surprised what you can do with that little. Check out MQ2LuaScripts.

@@ -25,7 +25,7 @@ Great! Follow the Quick Installation below. Make sure you also install MQ2LuaScr
 - Launch MQ2, then EQ.
 - Have fun!
 
-*NOTE WELL:* The MQ2Lua.dll is a very minimalistic binding between MQ2 and Lua. 
+**NOTE:** The MQ2Lua.dll is a deliberately minimalistic binding between MQ2 and Lua. 
 The guiding philosophy behind its design is that whatever can be done in Lua, should be done 
 in Lua. In fact, if you don't have a corresponding set of Lua scripts installed 
 alongside it, MQ2Lua.dll will do nothing at all!
@@ -40,8 +40,13 @@ or just want to learn more about the system, this is the place for you. Read on!
 
 ## Lua environment
 
-MQ2Lua creates a self-contained Lua environment when the plugin is launched. The environment
-is based around the Lua module system. Upon initialization, the following module search paths are
+MQ2Lua creates a self-contained Lua environment when the plugin is launched. For user security reasons, the
+environment does not include any of Lua's builtin operating-system or I/O functions. Specifically, the following
+Lua builtin libraries are available, and no others:
+	
+	string, table, package, coroutine, math, bit32
+
+The environment is governed by the Lua module system. Upon initialization, the following module search paths are
 automatically added by the C code: ($MQ2_DIR is the directory where MacroQuest2.exe is located)
 
 	$MQ2_DIR/lua/?.lua
@@ -108,7 +113,7 @@ Example: ```MQ2.data("gibberish")``` => ```nil```
 Sets the pulse handler. This function will be pcall()ed every pulse. 
 
 *WARNING:* Setting the pulse handler replaces the existing pulse handler! If you need multiple
-pulse handlers, implement that in Lua. (See MQ2LuaScripts)
+pulse handlers, implement that in Lua. (See MQ2LuaScripts, which implements this for you!)
 
 ### MQ2.events(table eventHandlers)
 
@@ -120,7 +125,12 @@ MQ2Lua will pcall() it. The following events are currently recognized:
 * ```zoned()``` -- MQ2 thinks the EverQuest client zoned. (WARNING: not always accurate)
 * ```leftZone(), enteredZone()``` -- as zoned(), but for each half of the transition. (WARNING: not always accurate)
 * ```shutdown()``` -- MQ2Lua is about to reload or exit; you should gracefully shutdown.
-* ```leftWorld(), enteredWorld()``` -- The user moves between character select and in-game. ```enteredWorld()``` is also called after a ```/lua reload``` provided the user is in game.
+* ```leftWorld(), enteredWorld()``` -- The user moves between character select and in-game. 
+```enteredWorld()``` is also called after a ```/lua reload``` provided the user is in game.
+* ```gameStateChanged()``` -- Called when MQ2 calls ```SetGameState```. Use ```MQ2.gamestate()``` to get the gamestate.
+
+*WARNING:* Setting an event handler table will clear out the existing one! If you need fancy
+event handling, implement it in Lua. (See MQ2LuaScripts, which implements this for you!)
 
 ### number time = MQ2.clock()
 
@@ -139,6 +149,12 @@ string yourself! (Whatever can be done in Lua, should be!)
 
 Combined with ```MQ2.load``` this can be used to develop a system for loading and storing user
 configuration information.
+
+### string state = MQ2.gamestate()
+
+Retrieves a string describing the MQ2 gamestate. Possible values:
+
+	INGAME, CHARCREATE, CHARSELECT, LOGGINGIN, PRECHARSELECT, UNLOADING, UNKNOWN
 
 ## What??? That's the whole API?
 

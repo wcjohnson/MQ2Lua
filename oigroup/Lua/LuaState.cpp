@@ -93,7 +93,7 @@ bool LuaState::getFlag(char const * name) {
 	lua_getfield(L, LUA_REGISTRYINDEX, "oigroup.stateflags");
 	lua_pushstring(L, name);
 	lua_rawget(L, -2);
-	return static_cast<bool>(lua_toboolean(L, -1));
+	return (lua_toboolean(L, -1) != 0);
 }
 
 bool LuaState::loadString(const char * code, bool leaveError)

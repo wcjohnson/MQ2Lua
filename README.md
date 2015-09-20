@@ -38,6 +38,15 @@ go to MQ2LuaScripts.
 On the other hand, if you are C++ coder interested in hacking on the actual DLL, extending the API,
 or just want to learn more about the system, this is the place for you. Read on!
 
+## Compiling from Source
+
+Get the source into your MQ tree under MQ2Lua/ (I used mkplugin), then build with Visual Studio.
+Make sure you have taken all the usual steps for compiling MQ2 plugins. (Consult MQ2 docs.)
+The project files in the repository are all in the VS2015 format.
+
+**MQ2Lua uses C++11, so you will not be able to compile it with ancient versions of Visual Studio.**
+I know VS2015 works. I can't vouch for any previous versions.
+
 ## Lua environment
 
 MQ2Lua creates a self-contained Lua environment when the plugin is launched. For user security reasons, the

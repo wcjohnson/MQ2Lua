@@ -59,11 +59,11 @@ template <typename T, class Sfinae = void> struct LuaMarshal {
 template <>
 struct LuaMarshal<bool> {
 	static inline bool get(lua_State * const L, int idx, bool & x) {
-		x = static_cast<bool>(lua_toboolean(L, idx));
+		x = (lua_toboolean(L, idx) != 0);
 		return true;
 	}
 	static inline void check(lua_State * const L, int idx, bool & x) {
-		x = static_cast<bool>(lua_toboolean(L, idx));
+		x = (lua_toboolean(L, idx) != 0);
 	}
 	static inline void push(lua_State * const L, bool const & x) {
 		lua_pushboolean(L, x);
@@ -76,7 +76,7 @@ struct LuaMarshal<int> {
 	static inline bool get(lua_State * const L, int idx, int & x) {
 		int isnum;
 		x = lua_tointegerx(L, idx, &isnum);
-		return static_cast<bool>(isnum);
+		return (isnum != 0);
 	}
 	static inline void check(lua_State * const L, int idx, int & x) {
 		x = static_cast<int>(luaL_checkinteger(L, idx)); // if this fails, this function won't return anyway
@@ -92,7 +92,7 @@ struct LuaMarshal<float> {
 	static inline bool get(lua_State * const L, int idx, float & x) {
 		int isnum;
 		x = static_cast<float>(lua_tonumberx(L, idx, &isnum));
-		return static_cast<bool>(isnum);
+		return (isnum != 0);
 	}
 	static inline void check(lua_State * const L, int idx, float & x) {
 		x = static_cast<float>(luaL_checknumber(L, idx));
@@ -108,7 +108,7 @@ struct LuaMarshal<double> {
 	static inline bool get(lua_State * const L, int idx, double & x) {
 		int isnum;
 		x = static_cast<double>(lua_tonumberx(L, idx, &isnum));
-		return static_cast<bool>(isnum);
+		return (isnum != 0);
 	}
 	static inline void check(lua_State * const L, int idx, double & x) {
 		x = static_cast<double>(luaL_checknumber(L, idx));
@@ -122,6 +122,7 @@ struct LuaMarshal<double> {
 template <>
 struct LuaMarshal<std::string> {
 	static inline bool get(lua_State * const L, int idx, std::string & x) {
+		if (!lua_isstring(L, idx)) return false;
 		size_t len;
 		const char *str = lua_tolstring(L, idx, &len);
 		if(str) { x.assign(str, len); return true; } else return false;
@@ -140,6 +141,7 @@ struct LuaMarshal<std::string> {
 template <>
 struct LuaMarshal<const char *> {
 	static inline bool get(lua_State * const L, int idx, const char * & x) {
+		if (!lua_isstring(L, idx)) return false;
 		const char *str = lua_tolstring(L, idx, NULL);
 		if (str) { x = str; return true; } else return false;
 	}
@@ -151,10 +153,10 @@ struct LuaMarshal<const char *> {
 	}
 };
 
-// Partial specialization: FunctionReference
-template <>
-struct LuaMarshal<FunctionReference> {
-	static inline bool get(lua_State * const L, int idx, FunctionReference & x) {
+// Partial specialization: TypedReference
+template <int LuaTypeID>
+struct LuaMarshal< TypedReference<LuaTypeID> > {
+	static inline bool get(lua_State * const L, int idx, TypedReference<LuaTypeID> & x) {
 		// Dup the function
 		lua_pushvalue(L, idx);
 		// Try to pop it
@@ -162,19 +164,16 @@ struct LuaMarshal<FunctionReference> {
 			return true;
 		} else {
 			// The dupped function is still on the stack. get rid of it.
-			lua_pop(L, 1);
-			return false;
+			lua_pop(L, 1); return false;
 		}
 	}
-	static inline void check(lua_State * const L, int idx, FunctionReference & x) {
+	static inline void check(lua_State * const L, int idx, TypedReference<LuaTypeID> & x) {
 		// Verify type
-		luaL_checktype(L, idx, LUA_TFUNCTION);
-		// Dup the function
-		lua_pushvalue(L, idx);
-		// Ref it
-		x.Pop(L);
+		luaL_checktype(L, idx, LuaTypeID);
+		// Dup and pop.
+		lua_pushvalue(L, idx); x.Pop(L);
 	}
-	static inline void push(lua_State * const L, FunctionReference const & x) {
+	static inline void push(lua_State * const L, TypedReference<LuaTypeID> const & x) {
 		x.Push(L);
 	}
 };
@@ -182,7 +181,7 @@ struct LuaMarshal<FunctionReference> {
 	template <class T>
 	struct LuaMarshal<
 		T *,
-		typename EnableIf<std::is_base_of<LuaObject, T>::value>::type
+		typename std::enable_if<std::is_base_of<LuaObject, T>::value>::type
 	>
 	{
 		static_assert(std::is_base_of<LuaObject, T>::value, "LuaMarshal: EnableIf failed for LuaObject base class");

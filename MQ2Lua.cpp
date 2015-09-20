@@ -25,6 +25,7 @@ bool shouldReloadOnNextPulse; // Defer reload for a pulse so Lua can ask Lua to 
 const char * gameState;
 // Event handlers.
 FunctionReference pulseHandler;
+TableReference eventsHandler;
 
 void printLuaError(const std::string & msg) {
 	std::string s = "[Lua error] " + msg;
@@ -40,73 +41,86 @@ void runScript(const char * code) {
 	}
 }
 
+template <typename... Args>
+void callEventHandler(const char * eventName, Args const &... args) {
+	constexpr int nargs = sizeof...(Args);
+	// Get the event function.
+	if ( (!LS) || (!eventName) || (!eventsHandler.IsValid()) ) return;
+	// Evaluate eventsHandler[eventName]
+	eventsHandler.Push(*LS);
+	LS->push(eventName);
+	lua_gettable(*LS, -2);
+	lua_remove(*LS, -2);
+	// eventsHandler[eventName] is the only thing on the stack now.
+	// Make sure it's a function
+	if (lua_type(*LS, -1) != LUA_TFUNCTION) {
+		lua_pop(*LS, 1); return;
+	}
+	// Push all args for the event handler
+	LuaVariadicPush(*LS, args...);
+	// Stack is now ready for a pcall
+	std::string errmsg;
+	if (!LS->pcall(nargs, 0, errmsg)) { printLuaError(errmsg); }
+}
+
 void didEnterZone() {
-	isZoning = false;
-	runScript("require(\"Core\")._enteredZone()");
+	isZoning = false; callEventHandler("enteredZone");
 }
 
 void didLeaveZone() {
-	isZoning = true;
-	runScript("require(\"Core\")._leftZone()");
+	isZoning = true; callEventHandler("leftZone");
 }
 
 void didEnterWorld() {
-	isInWorld = true;
-	runScript("require(\"Core\")._enteredWorld()");
+	isInWorld = true; callEventHandler("enteredWorld");
+	// Entering world counts as entering zone, I guess.
 	didEnterZone();
 }
 
 void didLeaveWorld() {
-	didLeaveZone();
-	isInWorld = false;
-	runScript("require(\"Core\")._leftWorld()");
+	didLeaveZone(); 
+	isInWorld = false; callEventHandler("leftWorld");
 }
 
 void initLuaState() {
-	if (!LS) {
-		LS = new LuaState();
-		// Install exotic libraries.
-		LS->InstallGlobalLibrary("coroutine", luaopen_coroutine);
-		// Build lua macros path
-		// gszIniPath is where the ini is.
-		std::string luaPath(gszINIPath);
-		std::string luaModuleString = luaPath + "/lua/?.lua;" + luaPath + "/lua/?/init.lua;" + luaPath + "/lua/lib/?.lua;" + luaPath + "/lua/lib/?/init.lua";
-		LS->SetPackagePath(luaModuleString.c_str());
-		//DebugSpewAlways("Initialized Lua with module path %s", luaModuleString.c_str());
-		// Load the core module.
-		runScript("_G.Core = require(\"Core\")");
-		// If we were already in the world, this was a /reload.
-		// Re-invoke didEnterWorld.
-		if (isInWorld) didEnterWorld();
-	} else {
-		DebugSpewAlways("Lua alread initialized");
-	}
+	if (LS) return; // lua already initialized
+
+	LS = new LuaState();
+	// Install exotic libraries.
+	LS->InstallGlobalLibrary("coroutine", luaopen_coroutine);
+	// Build lua macros path
+	// gszIniPath is where the ini is.
+	std::string luaPath(gszINIPath);
+	std::string luaModuleString = luaPath + "/lua/?.lua;" + luaPath + "/lua/?/init.lua;" + luaPath + "/lua/lib/?.lua;" + luaPath + "/lua/lib/?/init.lua";
+	LS->SetPackagePath(luaModuleString.c_str());
+	//DebugSpewAlways("Initialized Lua with module path %s", luaModuleString.c_str());
+	// Load the core module.
+	runScript("_G.Core = require(\"Core\")");
+	// If we were already in the world, this was a /reload.
+	// Re-invoke didEnterWorld.
+	if (isInWorld) didEnterWorld();
 }
 
 void teardownLuaState() {
-	if (LS) {
-		//DebugSpewAlways("Shutting down Lua.");
-		// Ask state to shutdown as gracefully as possible
-		runScript("require(\"Core\")._shutdown()");
-		// Destroy any references we might be holding to stuff inside this state
-		pulseHandler.Free();
-		// Destroy the state.
-		delete LS; LS = nullptr; 
-		//DebugSpewAlways("Lua shutdown successful.");
-	} else {
-		DebugSpewAlways("Lua already shut down");
-	}
-	
+	if (!LS) return;
+
+	callEventHandler("shutdown");
+	// Destroy any references we might be holding to stuff inside this state
+	pulseHandler.Free();
+	eventsHandler.Free();
+	// Destroy the state.
+	delete LS; LS = nullptr;	
 }
 
 void reloadLua() {
-	teardownLuaState();
-	initLuaState();
+	teardownLuaState(); initLuaState();
 }
 
 
 /////////////////////////////////// Lua API to call MQ2.
-bool pushMQ2Data(lua_State * L, MQ2TYPEVAR & rst) {
+
+// Push an mq2 data object to the Lua stack.
+int pushMQ2Data(lua_State * L, MQ2TYPEVAR & rst) {
 	if (rst.Type == pBoolType) {
 		if (rst.DWord == 0) LuaPush(L, false); else LuaPush(L, true);
 		return 1;
@@ -131,37 +145,13 @@ bool pushMQ2Data(lua_State * L, MQ2TYPEVAR & rst) {
 		LuaPush(L, (const char *)(&x[0]));
 		return 1;
 	} else {
-		//return luaL_argerror(L, 1, "DataVar must resolve to a pure type, not an object.");
 		// Cast objects to BOOL.
 		if (rst.DWord) LuaPush(L, true); else LuaPush(L, false);
 		return 1;
 	}
 }
 
-static int MQ2_log(lua_State * L) {
-	std::stringstream logline;
-	// Describe where it happened in the Lua source code if possible
-	lua_Debug d;
-	if (lua_getstack(L, 1, &d)) {
-		if (lua_getinfo(L, "Sl", &d)) {
-			logline << " <Lua: " << d.short_src << "@" << d.currentline << "> ";
-		}
-	}
-	// Concatenate the args.
-	int n = lua_gettop(L);
-	std::string part;
-	for (int i = 1; i <= n; ++i) {
-		LuaCheck(L, i, part);
-		logline << part;
-	}
-	// Print to chat
-	std::string s = logline.str();
-	const char *unfunf = s.c_str();
-	WriteChatColor((PCHAR)unfunf, CONCOLOR_YELLOW);
-	//DebugSpewAlways((PCHAR)unfunf);
-	return 0;
-}
-
+// Print string to mq2 chat window.
 static int MQ2_print(lua_State * L) {
 	std::stringstream logline;
 	logline << "[MQ2Lua] ";
@@ -169,14 +159,14 @@ static int MQ2_print(lua_State * L) {
 	int n = lua_gettop(L);
 	std::string part;
 	for (int i = 1; i <= n; ++i) {
-		LuaCheck(L, i, part);
-		logline << part;
+		LuaCheck(L, i, part); logline << part;
 	}
 	// Print to chat
 	WriteChatColor((PCHAR)logline.str().c_str());
 	return 0;
 }
 
+// Run a slash command.
 static int MQ2_exec(lua_State * L) {
 	std::string cmd;
 	LuaCheck(L, 1, cmd);
@@ -184,34 +174,59 @@ static int MQ2_exec(lua_State * L) {
 	return 0;
 }
 
+// Access an MQ2 datavar.
 static int MQ2_data(lua_State * L) {
 	const char * cmd;
 	char cmdBuf[MAX_STRING];
 	MQ2TYPEVAR rst;
 	// Demarshal the datavar name.
 	LuaCheck(L, 1, cmd);
-	// Soo... ParseMQ2DataPortion mutates the passed string and therefore fucks up the Lua state
-	// unless we copy it to a separate buffer. Madness.
+	// XXX: Soo... ParseMQ2DataPortion MUTATES the passed string (WHYYYYYYYYYYYYYYY)
+	// and therefore fucks up the Lua state unless we dup it to a separate buffer.
 	strncpy(cmdBuf, cmd, MAX_STRING); cmdBuf[MAX_STRING - 1] = '\0';
 	if (!ParseMQ2DataPortion(cmdBuf, rst)) {
 		lua_pushnil(L);
 		return 1;
 	} else {
-		pushMQ2Data(L, rst);
+		return pushMQ2Data(L, rst);
 	}
 }
 
-static int MQ2_event(lua_State * L) {
-	std::string eventName;
-	LuaCheck(L, 1, eventName);
-	// Demarshal a Lua function to call when the corresponding event happens.
-	// XXX: this is not very efficient, but this function is rarely called anyway.
-	if (eventName == "pulse") {
-		LuaCheck(L, 2, pulseHandler);
-		return 0;
-	} else {
-		return luaL_argerror(L, 1, "invalid event name");
+// Access MQ2 datavars, now with approximately 42% less fuckery.
+static int MQ2_xdata(lua_State * L) {
+	// xdata(a1, a2, a3, a4, a5, a6, ...) is like data("a1[a2].a3[a4].a5[a6]...")
+	int n = lua_gettop(L);
+	MQ2TYPEVAR accum;
+	const char *member = "";
+	const char *index = "";
+	// First (member, index) pair gives us the TLO
+	if (!LuaGet(L, 1, member)) { lua_pushnil(L); return 1; }
+	PMQ2DATAITEM tlo = FindMQ2Data((PCHAR)member); // at least this doesnt mutate its argument, lol
+	if(n >= 2) LuaGet(L, 2, index);
+	// Get the TLO.
+	if (!tlo->Function((PCHAR)index, accum)) { // what are the odds these things mutate their arguments?
+		lua_pushnil(L); return 1;
+	} 
+	// Iterate further member/index pairs.
+	for (int i = 3; i <= n; i = i + 2) {
+		member = ""; index = "";
+		if (!LuaGet(L, i, member)) break; // An absent member aborts.
+		if (n >= i + 1) LuaGet(L, i + 1, index);
+		if (!accum.Type->GetMember(accum.VarPtr, (PCHAR)member, (PCHAR)index, accum)) {
+			lua_pushnil(L); return 1;
+		}
 	}
+	// Return the object
+	return pushMQ2Data(L, accum);
+}
+
+
+// Registers a table of event handlers to be called back on MQ2 events.
+static int MQ2_events(lua_State * L) {
+	LuaCheck(L, 1, eventsHandler); return 0;
+}
+static int MQ2_pulse(lua_State * L) {
+	LuaCheck(L, 1, pulseHandler); return 0;
 }
 
 static int MQ2_clock(lua_State *L) {
@@ -224,6 +239,9 @@ static int MQ2_load(lua_State *L) {
 	std::string fileName;
 	LuaCheck(L, 1, fileName);
 	// XXX: make sure no path separators
+	if (fileName.find("..") != std::string::npos) {
+		return luaL_argerror(L, 1, "double-dot (..) is forbidden in filenames");
+	}
 	std::string basepath(gszINIPath);
 	fileName = basepath + "/lua/" + fileName;
 	// Load file
@@ -236,9 +254,12 @@ static int MQ2_load(lua_State *L) {
 
 static int MQ2_saveconfig(lua_State *L) {
 	// Get filename
-	// XXX: make sure no path separators or dots
 	std::string fileName;
 	LuaCheck(L, 1, fileName);
+	// XXX: make sure no path separators
+	if (fileName.find("..") != std::string::npos) {
+		return luaL_argerror(L, 1, "double-dot (..) is forbidden in filenames");
+	}
 	std::string basepath(gszINIPath);
 	fileName = basepath + "/lua/" + fileName + ".config.lua";
 	// Get data to save
@@ -267,10 +288,11 @@ struct lua_initializer {
 		lua_createtable(L, 0, 0);
 
 		EXPORT_TO_LUA(MQ2_print, print);
-		EXPORT_TO_LUA(MQ2_log, log);
 		EXPORT_TO_LUA(MQ2_exec, exec);
 		EXPORT_TO_LUA(MQ2_data, data);
-		EXPORT_TO_LUA(MQ2_event, event);
+		EXPORT_TO_LUA(MQ2_xdata, xdata);
+		EXPORT_TO_LUA(MQ2_events, events);
+		EXPORT_TO_LUA(MQ2_pulse, pulse);
 		EXPORT_TO_LUA(MQ2_clock, clock);
 		EXPORT_TO_LUA(MQ2_load, load);
 		EXPORT_TO_LUA(MQ2_saveconfig, saveconfig);
@@ -305,78 +327,50 @@ void CmdLua(PSPAWNINFO pChar, char* cmd) {
 	}
 	// Load rest of args
 	std::getline(ss, rest);
-
-	// Run Core.onCommand(command, rest)
-	{
-		LuaStackMarker marker(*LS);
-		lua_getglobal(*LS, "Core");
-		lua_getfield(*LS, -1, "onCommand");
-		LS->push(command);
-		LS->push(rest);
-		if (!LS->pcall(2, 0, command)) { printLuaError(command); }
-	}
+	// Exec lua event handler
+	callEventHandler("command", command, rest);
 }
 
 
 /////////////////////////////////////////////////////// Plugin DLL entry points
-
 // Called once, when the plugin is to initialize
-PLUGIN_API VOID InitializePlugin(VOID)
-{
+PLUGIN_API VOID InitializePlugin(VOID) {
 	shouldReloadOnNextPulse = false;
 	isInWorld = false; isZoning = false; gameState = "UNKNOWN";
 	initLuaState();
-    //Add commands, MQ2Data items, hooks, etc.
 	AddCommand("/lua", CmdLua);
-    //AddCommand("/mycommand",MyCommand);
-    //AddXMLFile("MQUI_MyXMLFile.xml");
-    //bmMyBenchmark=AddMQ2Benchmark("My Benchmark Name");
 }
 
-// Called once, when the plugin is to shutdown
-PLUGIN_API VOID ShutdownPlugin(VOID)
-{
+PLUGIN_API VOID ShutdownPlugin(VOID) {
 	RemoveCommand("/lua");
 	teardownLuaState();
-
-    //Remove commands, MQ2Data items, hooks, etc.
-    //RemoveMQ2Benchmark(bmMyBenchmark);
-    //RemoveCommand("/mycommand");
-    //RemoveXMLFile("MQUI_MyXMLFile.xml");
 }
 
 // Called after entering a new zone
-PLUGIN_API VOID OnZoned(VOID)
-{
-	WriteChatColor("MQ2Lua::OnZoned()");
-	runScript("require(\"Core\")._zoned()");
+PLUGIN_API VOID OnZoned(VOID) {
+	callEventHandler("zoned");
 }
 
 // Called once directly before shutdown of the new ui system, and also
 // every time the game calls CDisplay::CleanGameUI()
-PLUGIN_API VOID OnCleanUI(VOID)
-{
-    WriteChatColor("MQ2Lua::OnCleanUI()");
+PLUGIN_API VOID OnCleanUI(VOID) {
+	callEventHandler("cleanUI");
     // destroy custom windows, etc
 }
 
 // Called once directly after the game ui is reloaded, after issuing /loadskin
-PLUGIN_API VOID OnReloadUI(VOID)
-{
-    WriteChatColor("MQ2Lua::OnReloadUI()");
+PLUGIN_API VOID OnReloadUI(VOID) {
+	callEventHandler("reloadUI");
     // recreate custom windows, etc
 }
 
 // Called every frame that the "HUD" is drawn -- e.g. net status / packet loss bar
-PLUGIN_API VOID OnDrawHUD(VOID)
-{
-    // DONT leave in this debugspew, even if you leave in all the others
-    //DebugSpewAlways("MQ2Lua::OnDrawHUD()");
+PLUGIN_API VOID OnDrawHUD(VOID) {
+	callEventHandler("drawHUD");
 }
 
 // Called once directly after initialization, and then every time the gamestate changes
-PLUGIN_API VOID SetGameState(DWORD GameState)
-{
+PLUGIN_API VOID SetGameState(DWORD GameState) {
 	// Fire GameStateChanged events.
 	switch (GameState) {
 	case GAMESTATE_INGAME:
@@ -395,7 +389,7 @@ PLUGIN_API VOID SetGameState(DWORD GameState)
 	default:
 		gameState = "UNKNOWN"; break;
 	}
-	runScript("require(\"Core\")._gameStateChanged()");
+	callEventHandler("gameStateChanged");
 
 	// Fire didLeaveWorld events.
 	switch (GameState) {
@@ -404,7 +398,7 @@ PLUGIN_API VOID SetGameState(DWORD GameState)
 		if (isZoning) didEnterZone();
 		break;
 	case GAMESTATE_LOGGINGIN:
-		// MQ2 fires this when we zone.
+		// MQ2 sometimes fires this instead of DidZone() when we zone.
 		if (!isZoning) didLeaveZone();
 		break;
 	case GAMESTATE_CHARCREATE:
@@ -423,73 +417,63 @@ PLUGIN_API VOID SetGameState(DWORD GameState)
 
 
 // This is called every time MQ pulses
-PLUGIN_API VOID OnPulse(VOID)
-{
-    // DONT leave in this debugspew, even if you leave in all the others
-    //DebugSpewAlways("MQ2Lua::OnPulse()");
+PLUGIN_API VOID OnPulse(VOID) {
 	if (shouldReloadOnNextPulse) {
 		shouldReloadOnNextPulse = false;
 		reloadLua();
 		return;
 	}
 
-	if (LS && pulseHandler.IsValid()) {
-		if (pulseHandler.Push(*LS)) {
-			if (lua_pcall(*LS, 0, 0, 0)) {
-				std::string luaError;
-				LS->get(-1, luaError); LS->pop(1);
-				printLuaError(luaError);
-			}
-		} else {
-			LS->pop(1);
+	if (!LS) return;
+
+	if (pulseHandler.Push(*LS)) {
+		std::string luaError;
+		if (!LS->pcall(0, 0, luaError)) {
+			printLuaError(luaError);
 		}
+	} else {
+		// pulseHandler.Push leaves nil on the stack when it fails
+		LS->pop(1);
 	}
 }
 
 // This is called every time WriteChatColor is called by MQ2Main or any plugin,
 // IGNORING FILTERS, IF YOU NEED THEM MAKE SURE TO IMPLEMENT THEM. IF YOU DONT
 // CALL CEverQuest::dsp_chat MAKE SURE TO IMPLEMENT EVENTS HERE (for chat plugins)
-PLUGIN_API DWORD OnWriteChatColor(PCHAR Line, DWORD Color, DWORD Filter)
-{
-    //DebugSpewAlways("MQ2Lua::OnWriteChatColor(%s)",Line);
+PLUGIN_API DWORD OnWriteChatColor(PCHAR Line, DWORD Color, DWORD Filter) {
+	callEventHandler("onWriteChatColor");
     return 0;
 }
 
 // This is called every time EQ shows a line of chat with CEverQuest::dsp_chat,
 // but after MQ filters and chat events are taken care of.
-PLUGIN_API DWORD OnIncomingChat(PCHAR Line, DWORD Color)
-{
-    //DebugSpewAlways("MQ2Lua::OnIncomingChat(%s)",Line);
+PLUGIN_API DWORD OnIncomingChat(PCHAR Line, DWORD Color) {
+	callEventHandler("onIncomingChat");
     return 0;
 }
 
 // This is called each time a spawn is added to a zone (inserted into EQ's list of spawns),
 // or for each existing spawn when a plugin first initializes
 // NOTE: When you zone, these will come BEFORE OnZoned
-PLUGIN_API VOID OnAddSpawn(PSPAWNINFO pNewSpawn)
-{
-    //DebugSpewAlways("MQ2Lua::OnAddSpawn(%s)",pNewSpawn->Name);
+PLUGIN_API VOID OnAddSpawn(PSPAWNINFO pNewSpawn) {
+	callEventHandler("onAddSpawn", (lua_Number)(pNewSpawn->SpawnID) );
 }
 
 // This is called each time a spawn is removed from a zone (removed from EQ's list of spawns).
 // It is NOT called for each existing spawn when a plugin shuts down.
-PLUGIN_API VOID OnRemoveSpawn(PSPAWNINFO pSpawn)
-{
-    //DebugSpewAlways("MQ2Lua::OnRemoveSpawn(%s)",pSpawn->Name);
-	//pSpawn->SpawnID
+PLUGIN_API VOID OnRemoveSpawn(PSPAWNINFO pSpawn) {
+	callEventHandler("onRemoveSpawn", (lua_Number)(pSpawn->SpawnID));
 }
 
 // This is called each time a ground item is added to a zone
 // or for each existing ground item when a plugin first initializes
 // NOTE: When you zone, these will come BEFORE OnZoned
-PLUGIN_API VOID OnAddGroundItem(PGROUNDITEM pNewGroundItem)
-{
-    //DebugSpewAlways("MQ2Lua::OnAddGroundItem(%d)",pNewGroundItem->DropID);
+PLUGIN_API VOID OnAddGroundItem(PGROUNDITEM pNewGroundItem) {
+	callEventHandler("onAddGroundItem", (lua_Number)(pNewGroundItem->DropID) );
 }
 
 // This is called each time a ground item is removed from a zone
 // It is NOT called for each existing ground item when a plugin shuts down.
-PLUGIN_API VOID OnRemoveGroundItem(PGROUNDITEM pGroundItem)
-{
-    //DebugSpewAlways("MQ2Lua::OnRemoveGroundItem(%d)",pGroundItem->DropID);
+PLUGIN_API VOID OnRemoveGroundItem(PGROUNDITEM pGroundItem) {
+	callEventHandler("onRemoveGroundItem", (lua_Number)(pGroundItem->DropID));
 }

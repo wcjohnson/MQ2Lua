@@ -79,23 +79,19 @@ public:
 	/// Evaluates a string with pcall, saving the error to the given std::string.
 	/// If no error, string is not modified.
 	bool evalAndGetError(const char * code, std::string & errmsg);
+	/// Runs pcall, return false on error and captures the error message.
+	bool pcall(int nargs, int nresults, std::string & errmsg);
 
 	/// Unmarshal a value from Lua at the given stack index.
 	template <typename T>
-	inline bool get(int idx, T & x) {
-		return LuaMarshal<T>::get(L, idx, x);
-	}
+	inline bool get(int idx, T & x) { return LuaMarshal<T>::get(L, idx, x); }
 	/// Check that the value at the given index can be unmarshalled.
 	/// Lua error if not, unmarshal if so
 	template <typename T>
-	inline void check(int idx, T & x) {
-		return LuaMarshal<T>::check(L, idx, x);
-	}
+	inline void check(int idx, T & x) { return LuaMarshal<T>::check(L, idx, x); }
 	/// Marshal and push a value to Lua.
 	template <typename T>
-	inline bool push(T const & x) {
-		LuaMarshal<T>::push(L, x);
-	}
+	inline void push(T const & x) { return LuaMarshal<T>::push(L, x); }
 	/// Pop n items.
 	inline void pop(int n) { lua_pop(L, n); }
 

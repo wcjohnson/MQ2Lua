@@ -8,6 +8,7 @@
 #include <oigroup/Lua/LuaState.hpp>
 #include <oigroup/Lua/LuaMarshal.hpp>
 #include <oigroup/Lua/LuaReferences.hpp>
+#include <oigroup/Lua/LuaStackMarker.hpp>
 
 #include <sstream>
 #include <fstream>
@@ -20,6 +21,7 @@ PreSetup("MQ2Lua");
 LuaState * LS; // Global lua state.
 bool isInWorld;
 bool isZoning;
+bool shouldReloadOnNextPulse; // Defer reload for a pulse so Lua can ask Lua to reload without blowing up Lua.
 const char * gameState;
 // Event handlers.
 FunctionReference pulseHandler;
@@ -31,11 +33,10 @@ void printLuaError(const std::string & msg) {
 }
 
 void runScript(const char * code) {
-	if (LS) {
-		std::string luaError;
-		if (!LS->evalAndGetError(code, luaError)) {
-			printLuaError(luaError);
-		}
+	if (!LS) return;
+	std::string luaError;
+	if (!LS->evalAndGetError(code, luaError)) {
+		printLuaError(luaError);
 	}
 }
 
@@ -105,6 +106,38 @@ void reloadLua() {
 
 
 /////////////////////////////////// Lua API to call MQ2.
+bool pushMQ2Data(lua_State * L, MQ2TYPEVAR & rst) {
+	if (rst.Type == pBoolType) {
+		if (rst.DWord == 0) LuaPush(L, false); else LuaPush(L, true);
+		return 1;
+	} else if (rst.Type == pFloatType) {
+		LuaPush(L, rst.Float);
+		return 1;
+	} else if (rst.Type == pDoubleType) {
+		LuaPush(L, rst.Double);
+		return 1;
+	} else if (rst.Type == pIntType) {
+		LuaPush(L, rst.Int);
+		return 1;
+	} else if (rst.Type == pInt64Type) {
+		LuaPush(L, (lua_Number)rst.Int64);
+		return 1;
+	} else if (rst.Type == pStringType) {
+		LuaPush(L, (const char *)rst.Ptr);
+		return 1;
+	} else if (rst.Type == pByteType) {
+		char x[2];
+		x[0] = (char)(rst.DWord % 0xFF); x[1] = (char)0;
+		LuaPush(L, (const char *)(&x[0]));
+		return 1;
+	} else {
+		//return luaL_argerror(L, 1, "DataVar must resolve to a pure type, not an object.");
+		// Cast objects to BOOL.
+		if (rst.DWord) LuaPush(L, true); else LuaPush(L, false);
+		return 1;
+	}
+}
+
 static int MQ2_log(lua_State * L) {
 	std::stringstream logline;
 	// Describe where it happened in the Lua source code if possible
@@ -164,42 +197,7 @@ static int MQ2_data(lua_State * L) {
 		lua_pushnil(L);
 		return 1;
 	} else {
-		if (rst.Type == pBoolType) {
-			if (rst.DWord == 0) LuaPush(L, false); else LuaPush(L, true);
-			return 1;
-		}
-		else if (rst.Type == pFloatType) {
-			LuaPush(L, rst.Float);
-			return 1;
-		}
-		else if (rst.Type == pDoubleType) {
-			LuaPush(L, rst.Double);
-			return 1;
-		}
-		else if (rst.Type == pIntType) {
-			LuaPush(L, rst.Int);
-			return 1;
-		}
-		else if (rst.Type == pInt64Type) {
-			LuaPush(L, (lua_Number)rst.Int64);
-			return 1;
-		}
-		else if (rst.Type == pStringType) {
-			LuaPush(L, (const char *)rst.Ptr);
-			return 1;
-		}
-		else if (rst.Type == pByteType) {
-			char x[2];
-			x[0] = (char)(rst.DWord % 0xFF); x[1] = (char)0;
-			LuaPush(L, (const char *)(&x[0]));
-			return 1;
-		}
-		else {
-			//return luaL_argerror(L, 1, "DataVar must resolve to a pure type, not an object.");
-			// Cast objects to BOOL.
-			if (rst.DWord) LuaPush(L, true); else LuaPush(L, false);
-			return 1;
-		}
+		pushMQ2Data(L, rst);
 	}
 }
 
@@ -291,26 +289,45 @@ struct lua_initializer {
 ////////////////////////////////////////////////////// Slash commands
 
 void CmdLua(PSPAWNINFO pChar, char* cmd) {
-	runScript(cmd);
-}
+	if (!LS) return;
+	// Parse the command
+	std::istringstream ss(cmd);
+	std::string command;
+	std::string rest("");
+	if ( (!std::getline(ss, command, ' ')) || command.length() == 0) {
+		printLuaError("Empty command");
+		return;
+	}
+	// Special case: reload
+	if (command == "reload") {
+		shouldReloadOnNextPulse = true;
+		return;
+	}
+	// Load rest of args
+	std::getline(ss, rest);
 
-void CmdLuaReload(PSPAWNINFO pChar, char* cmd) {
-	if (LS) {
-		reloadLua();
+	// Run Core.onCommand(command, rest)
+	{
+		LuaStackMarker marker(*LS);
+		lua_getglobal(*LS, "Core");
+		lua_getfield(*LS, -1, "onCommand");
+		LS->push(command);
+		LS->push(rest);
+		if (!LS->pcall(2, 0, command)) { printLuaError(command); }
 	}
 }
+
 
 /////////////////////////////////////////////////////// Plugin DLL entry points
 
 // Called once, when the plugin is to initialize
 PLUGIN_API VOID InitializePlugin(VOID)
 {
-    DebugSpewAlways("Initializing MQ2Lua");
+	shouldReloadOnNextPulse = false;
 	isInWorld = false; isZoning = false; gameState = "UNKNOWN";
 	initLuaState();
     //Add commands, MQ2Data items, hooks, etc.
 	AddCommand("/lua", CmdLua);
-	AddCommand("/luareload", CmdLuaReload);
     //AddCommand("/mycommand",MyCommand);
     //AddXMLFile("MQUI_MyXMLFile.xml");
     //bmMyBenchmark=AddMQ2Benchmark("My Benchmark Name");
@@ -319,8 +336,6 @@ PLUGIN_API VOID InitializePlugin(VOID)
 // Called once, when the plugin is to shutdown
 PLUGIN_API VOID ShutdownPlugin(VOID)
 {
-    DebugSpewAlways("Shutting down MQ2Lua");
-	RemoveCommand("/luareload");
 	RemoveCommand("/lua");
 	teardownLuaState();
 
@@ -412,12 +427,17 @@ PLUGIN_API VOID OnPulse(VOID)
 {
     // DONT leave in this debugspew, even if you leave in all the others
     //DebugSpewAlways("MQ2Lua::OnPulse()");
+	if (shouldReloadOnNextPulse) {
+		shouldReloadOnNextPulse = false;
+		reloadLua();
+		return;
+	}
 
 	if (LS && pulseHandler.IsValid()) {
 		if (pulseHandler.Push(*LS)) {
 			if (lua_pcall(*LS, 0, 0, 0)) {
 				std::string luaError;
-				LS->get(1, luaError); LS->pop(1);
+				LS->get(-1, luaError); LS->pop(1);
 				printLuaError(luaError);
 			}
 		} else {

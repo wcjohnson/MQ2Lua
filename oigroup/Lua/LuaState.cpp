@@ -126,7 +126,18 @@ bool oigroup::Lua::LuaState::evalAndGetError(const char * code, std::string & er
 {
 	// Load the chunk.
 	if ((!loadString(code, true)) || (lua_pcall(L, 0, 0, 0))) {
-		LuaGet(L, 1, errmsg);
+		LuaGet(L, -1, errmsg);
+		lua_pop(L, 1);
+		return false;
+	} else {
+		return true;
+	}
+}
+
+bool oigroup::Lua::LuaState::pcall(int nargs, int nresults, std::string & errmsg)
+{
+	if (lua_pcall(L, nargs, nresults, 0)) {
+		LuaGet(L, -1, errmsg);
 		lua_pop(L, 1);
 		return false;
 	} else {

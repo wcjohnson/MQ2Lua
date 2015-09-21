@@ -192,31 +192,62 @@ static int MQ2_data(lua_State * L) {
 	}
 }
 
-// Access MQ2 datavars, now with approximately 42% less fuckery.
+
+bool Lgetstr(lua_State * L, int idx, char * buf, size_t max) {
+	// Clear buffer
+	buf[0] = '\0';
+	if (!lua_isstring(L, idx)) return false;
+	const char *str = lua_tolstring(L, idx, nullptr);
+	if (!str) return false;
+	strncpy(buf, str, max); buf[max - 1] = '\0';
+	return true;
+}
+
+// Access MQ2 datavars without going through the parser.
 static int MQ2_xdata(lua_State * L) {
 	// xdata(a1, a2, a3, a4, a5, a6, ...) is like data("a1[a2].a3[a4].a5[a6]...")
 	int n = lua_gettop(L);
 	MQ2TYPEVAR accum;
-	const char *member = "";
-	const char *index = "";
-	// First (member, index) pair gives us the TLO
+	// char member[MAX_STRING]; char index[MAX_STRING]; // Buffered version
+	const char * member = ""; const char * index = ""; // Direct version
+
+	////////////// First get the TLO, which is arg1.
+	//if (!Lgetstr(L, 1, member, MAX_STRING)) { lua_pushnil(L); return 1; }
 	if (!LuaGet(L, 1, member)) { lua_pushnil(L); return 1; }
-	PMQ2DATAITEM tlo = FindMQ2Data((PCHAR)member); // at least this doesnt mutate its argument, lol
-	if(n >= 2) LuaGet(L, 2, index);
-	// Get the TLO.
-	if (!tlo->Function((PCHAR)index, accum)) { // what are the odds these things mutate their arguments?
-		lua_pushnil(L); return 1;
-	} 
+
+	PMQ2DATAITEM tlo = FindMQ2Data((char*)member);
+	if (!tlo) { lua_pushnil(L); return 1; } // invalid TLO
+	
+	////////////// Now get the TLO's index if any.
+	//if(n >= 2) Lgetstr(L, 2, index, MAX_STRING);
+	if (n >= 2) LuaGet(L, 2, index);
+
+	// Evaluate the TLO at the index.
+	if (!tlo->Function((char*)index, accum)) { lua_pushnil(L); return 1; } 
+
+	////////////// Now continue evaluating members and indices.
 	// Iterate further member/index pairs.
 	for (int i = 3; i <= n; i = i + 2) {
+		if (!accum.Type) { lua_pushnil(L); return 1; } // Somehow we got a non-object; abort.
+
+		// Reset parse vars
 		member = ""; index = "";
-		if (!LuaGet(L, i, member)) break; // An absent member aborts.
+
+		// If no member, abort.
+		//if (!Lgetstr(L, i, member, MAX_STRING)) break;
+		if (!LuaGet(L, i, member)) break;
+
+		// Grab index if present
+		//if (n >= i + 1) Lgetstr(L, i + 1, index, MAX_STRING); else index[0] = '\0';
 		if (n >= i + 1) LuaGet(L, i + 1, index);
-		if (!accum.Type->GetMember(accum.VarPtr, (PCHAR)member, (PCHAR)index, accum)) {
+		
+		// Execute GetMember, putting the result back into the accumulator for further indexing.
+		if (!accum.Type->GetMember(accum.VarPtr, (char*)member, (char*)index, accum)) {
 			lua_pushnil(L); return 1;
 		}
 	}
-	// Return the object
+
+	/////////////////////// Return the final object after indexing and member processing.
 	return pushMQ2Data(L, accum);
 }
 

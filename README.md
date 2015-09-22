@@ -100,14 +100,15 @@ Example: ```MQ2.exec("/casting \"Shield of Dreams\"")``` => Your character will 
 
 ### value = MQ2.data(string dataVarName)
 
-Retrieves the value of an MQ2 DataVar. Indices and members are processed, but MQ2 variables ARE NOT
-interpolated. The value is converted into a plain Lua type in the most reasonable possible way.
-Floats and ints are converted to Lua numbers. Strings and booleans are converted to Lua strings
-and booleans.
+Retrieves the value of an MQ2 DataVar. This function uses MQ2's parser and so will interpolate
+variables, but note that MQ2 variables are *NOT* the same as Lua variables. If you need to reference
+the value of Lua variables, you will need to use ```string.format``` (or see ```MQ2.xdata``` below).
 
-If the DataVar would resolve to an MQ2 object, then it is cast to boolean, so "true" will be
-returned if the object exists, "false" otherwise. If the DataVar can't be parsed or doesn't exist,
-the Lua literal nil will be returned.
+The resulting data value is converted into a plain Lua type in the most reasonable possible way.
+Floats and ints are converted to Lua numbers. Strings and booleans are converted to Lua strings
+and booleans. If the DataVar would resolve to an MQ2 object, then it is cast to boolean, so ```true``` will be
+returned if the object exists, ```false``` otherwise. If the DataVar can't be parsed or doesn't exist,
+the Lua literal ```nil``` will be returned.
 
 Example: ```MQ2.data("Me.PctHPs")``` => ```100```
 
@@ -116,6 +117,20 @@ Example: ```MQ2.data("Me.XTarget[1].TargetType")``` => ```"Auto Hater"```
 Example: ```MQ2.data("Me")``` => ```true``` (Me is an object)
 
 Example: ```MQ2.data("gibberish")``` => ```nil```
+
+### value = MQ2.xdata(string tlo, index, string member1, index, ...)
+
+An alternative way of accessing MQ2 DataVars that does not use MQ2's parser. This can be more efficient
+(though less readable) than MQ2.data, especially when you would need to create a temporary Lua string
+to call MQ2.data.
+
+```MQ2.xdata(x1, y1, x2, y2, x3, y3, ...)``` is like ```MQ2.data("x1[y1].x2[y2].x3[y3]...")```. If you
+do not need to index a variable, you may pass nil for the corresponding index. xdata returns ```nil```
+in the event of a missing variable, bad index, or bad field. Otherwise it returns exactly as data would.
+
+Example: ```MQ2.xdata("Me", nil, "PctHPs") => ```100```
+
+Example: ```MQ2.xdata("Me", nil, "XTarget", 1, "TargetType") => ```"Auto Hater"```
 
 ### MQ2.pulse(function pulseHandler)
 
@@ -165,6 +180,3 @@ Retrieves a string describing the MQ2 gamestate. Possible values:
 
 	INGAME, CHARCREATE, CHARSELECT, LOGGINGIN, PRECHARSELECT, UNLOADING, UNKNOWN
 
-## What??? That's the whole API?
-
-Yup! And you'd be surprised what you can do with that little. Check out MQ2LuaScripts.

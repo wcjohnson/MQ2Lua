@@ -153,16 +153,9 @@ int pushMQ2Data(lua_State * L, MQ2TYPEVAR & rst) {
 
 // Print string to mq2 chat window.
 static int MQ2_print(lua_State * L) {
-	std::stringstream logline;
-	logline << "[MQ2Lua] ";
-	// Concatenate the args.
-	int n = lua_gettop(L);
-	std::string part;
-	for (int i = 1; i <= n; ++i) {
-		LuaCheck(L, i, part); logline << part;
-	}
-	// Print to chat
-	WriteChatColor((PCHAR)logline.str().c_str());
+	std::string str;
+	LuaCheck(L, 1, str);
+	WriteChatColor((PCHAR)str.c_str());
 	return 0;
 }
 
@@ -183,6 +176,8 @@ static int MQ2_data(lua_State * L) {
 	LuaCheck(L, 1, cmd);
 	// XXX: Soo... ParseMQ2DataPortion MUTATES the passed string (WHYYYYYYYYYYYYYYY)
 	// and therefore fucks up the Lua state unless we dup it to a separate buffer.
+	// (It took me like 20 EQ crashes to figure this out, because the crash doesn't happen
+	// right away... the lua state gets slightl corrupted and then eventually explodes.)
 	strncpy(cmdBuf, cmd, MAX_STRING); cmdBuf[MAX_STRING - 1] = '\0';
 	if (!ParseMQ2DataPortion(cmdBuf, rst)) {
 		lua_pushnil(L);
@@ -256,6 +251,8 @@ static int MQ2_xdata(lua_State * L) {
 static int MQ2_events(lua_State * L) {
 	LuaCheck(L, 1, eventsHandler); return 0;
 }
+
+// Registers a function to be called every pulse.
 static int MQ2_pulse(lua_State * L) {
 	LuaCheck(L, 1, pulseHandler); return 0;
 }

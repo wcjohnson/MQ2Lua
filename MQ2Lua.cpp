@@ -189,9 +189,12 @@ static int MQ2_data(lua_State * L) {
 	}
 }
 
-// Access MQ2 datavars without going through the parser.
+// Access MQ2 datavars without going through MQ2's parser.
+// Can be much more efficient than data() in that you can compose queries without creating
+// temporary Lua strings.
 static int MQ2_xdata(lua_State * L) {
 	// CRASH PREVENTION: Don't access datavars when not in game.
+	// (MQ2Main doesn't crash here, but some plugins create DataVars that do.)
 	if (gGameState != GAMESTATE_INGAME) { lua_pushnil(L); return 1; }
 	// xdata(a1, a2, a3, a4, a5, a6, ...) is like data("a1[a2].a3[a4].a5[a6]...")
 	int n = lua_gettop(L);
@@ -211,6 +214,8 @@ static int MQ2_xdata(lua_State * L) {
 	if (n >= 2) LuaGet(L, 2, index);
 
 	// Evaluate the TLO at the index.
+	// XXX: I'm guessing this doesn't mutate the index, because I haven't had EQ crash
+	// mysteriously on me since implementing this. However, keep in mind this is a possible source of crashes.
 	if (!tlo->Function((char*)index, accum)) { lua_pushnil(L); return 1; } 
 
 	////////////// Now continue evaluating members and indices.
@@ -230,6 +235,8 @@ static int MQ2_xdata(lua_State * L) {
 		if (n >= i + 1) LuaGet(L, i + 1, index);
 		
 		// Execute GetMember, putting the result back into the accumulator for further indexing.
+		// XXX: Another possible source of crashes if it mutates the member or index, though
+		// it hasn't happened yet.
 		if (!accum.Type->GetMember(accum.VarPtr, (char*)member, (char*)index, accum)) {
 			lua_pushnil(L); return 1;
 		}
@@ -250,11 +257,13 @@ static int MQ2_pulse(lua_State * L) {
 	LuaCheck(L, 1, pulseHandler); return 0;
 }
 
+// Get time in floating-point seconds, with millisecond precision.
 static int MQ2_clock(lua_State *L) {
 	lua_pushnumber(L, ((lua_Number)clock()) / (lua_Number)CLOCKS_PER_SEC);
 	return 1;
 }
 
+// Load a lua file.
 static int MQ2_load(lua_State *L) {
 	// Get filename
 	std::string fileName;

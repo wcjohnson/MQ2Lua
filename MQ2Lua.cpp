@@ -169,6 +169,8 @@ static int MQ2_exec(lua_State * L) {
 
 // Access an MQ2 datavar.
 static int MQ2_data(lua_State * L) {
+	// CRASH PREVENTION: Don't access datavars when not in game.
+	if (gGameState != GAMESTATE_INGAME) { lua_pushnil(L); return 1; }
 	const char * cmd;
 	char cmdBuf[MAX_STRING];
 	MQ2TYPEVAR rst;
@@ -187,19 +189,10 @@ static int MQ2_data(lua_State * L) {
 	}
 }
 
-
-bool Lgetstr(lua_State * L, int idx, char * buf, size_t max) {
-	// Clear buffer
-	buf[0] = '\0';
-	if (!lua_isstring(L, idx)) return false;
-	const char *str = lua_tolstring(L, idx, nullptr);
-	if (!str) return false;
-	strncpy(buf, str, max); buf[max - 1] = '\0';
-	return true;
-}
-
 // Access MQ2 datavars without going through the parser.
 static int MQ2_xdata(lua_State * L) {
+	// CRASH PREVENTION: Don't access datavars when not in game.
+	if (gGameState != GAMESTATE_INGAME) { lua_pushnil(L); return 1; }
 	// xdata(a1, a2, a3, a4, a5, a6, ...) is like data("a1[a2].a3[a4].a5[a6]...")
 	int n = lua_gettop(L);
 	MQ2TYPEVAR accum;
